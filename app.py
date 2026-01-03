@@ -4,7 +4,7 @@ from datetime import datetime
 from streamlit_calendar import calendar
 
 from functions.database import init_db
-from functions.auth import authenticate_user, create_user
+from functions.auth import authenticate_user
 from functions.events import get_events, create_event, delete_event, update_event_time
 from functions.attendance import set_attendance, get_attendance
 
@@ -46,23 +46,21 @@ def sort_events(events, user_tz):
 # LOGIN
 # --------------------------------------------------
 if not st.session_state.auth:
-    st.title("🔐 Login - Borgström Calendar")
+    col1, col2, col3 = st.columns(3)
+    with col2:
+        st.title(f":green[BORGSTRÖM calendar]")
+    st.divider()
 
-    mode = st.radio("", ["Login", "Sign Up"], horizontal=True)
     username = st.text_input("Username", width=200)
     password = st.text_input("Password", type="password", width=200)
 
-    if st.button(mode, type="primary"):
-        if mode == "Sign Up":
-            if create_user(username, password):
-                st.success("Account created. You can now log in.")
+    if st.button("Login", type="primary", width=200):
+        auth = authenticate_user(username, password)
+        if auth:
+            st.session_state.auth = auth
+            st.rerun()
         else:
-            auth = authenticate_user(username, password)
-            if auth:
-                st.session_state.auth = auth
-                st.rerun()
-            else:
-                st.error("Invalid credentials")
+            st.error("Invalid credentials")
 
     st.stop()
 
@@ -77,15 +75,15 @@ user_tz = pytz.timezone(user["timezone"])
 # SIDEBAR — CREATE EVENT
 # --------------------------------------------------
 with st.sidebar:
-    st.header("➕ Create Event")
+    st.header(":green[Create Event]")
 
     title = st.text_input("Title")
     subject = st.selectbox("Subject", SUBJECT_COLORS.keys())
     description = st.text_area("Description")
     private = st.checkbox("Private event")
 
-    start = st.datetime_input("Start")
-    end = st.datetime_input("End")
+    start = st.date_input("Start date")
+    end = st.date_input("End date")
 
     recurring = st.checkbox("Recurring")
     rrule = st.selectbox(
@@ -93,13 +91,13 @@ with st.sidebar:
         ["FREQ=DAILY", "FREQ=WEEKLY", "FREQ=MONTHLY"]
     ) if recurring else None
 
-    if st.button("Create", type="primary"):
+    if st.button("Create", type="primary", width=220):
         create_event({
             "title": title,
             "subject": subject,
             "description": description,
-            "start": user_tz.localize(start).isoformat(),
-            "end": user_tz.localize(end).isoformat(),
+            "start": user_tz.localize(datetime.combine(start, datetime.min.time())).isoformat(),
+            "end": user_tz.localize(datetime.combine(end, datetime.min.time())).isoformat(),
             "timezone": user["timezone"],
             "created_by": user["username"],
             "is_private": int(private),
@@ -109,8 +107,18 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
+    st.subheader("📥 Import calendar")
 
-    if st.button("🚪 Logout"):
+    ics_file = st.file_uploader("Upload .ics file", type="ics")
+
+    if ics_file:
+        from functions.ics import import_ics
+        import_ics(ics_file, user)
+        st.success("Calendar imported")
+        st.rerun()
+
+    st.divider()
+    if st.button(":red[Logout]", width=220):
         st.session_state.auth = None
         st.rerun()
 
@@ -143,7 +151,7 @@ for e in get_events():
     })
 
 with left:
-    st.subheader("📅 Borgström Calendar")
+    st.subheader(":green[Borgström Calendar]")
 
     cal = calendar(
         events=calendar_events,
@@ -168,7 +176,7 @@ if cal and "eventDrop" in cal:
 # EVENT LIST / DETAILS (RIGHT)
 # --------------------------------------------------
 with right:
-    st.subheader("📋 Events")
+    st.subheader(":green[Events]")
 
     raw_events = []
     for e in get_events():
@@ -197,12 +205,14 @@ with right:
             </span>
             """
 
-            header = f"{e['title']} — {start_dt.strftime('%Y-%m-%d %H:%M')}"
+            header = f"{e['title']} — {start_dt.strftime("%Y-%m-%d")}"
 
             with st.expander(header):
                 st.markdown(badge, unsafe_allow_html=True)
                 st.write(f"**Creator:** {e['created_by']}")
-                st.write(f"**Time:** {start_dt} → {end_dt}")
+                start_str = start_dt.strftime("%b %d, %Y")
+                end_str = end_dt.strftime("%b %d, %Y")
+                st.write(f"**Date:** {start_str} → {end_str}")
                 st.write(e["description"])
 
                 c1, c2 = st.columns(2)
@@ -217,11 +227,53 @@ with right:
 
                 if is_admin or e["created_by"] == user["username"]:
                     st.divider()
-                    if st.button("🗑 Delete event", key=f"x{e['id']}"):
+                    st.markdown("### ✏️ Edit Event")
+
+                    new_title = st.text_input(
+                        "Title",
+                        e["title"],
+                        key=f"edit_title_{e['id']}"
+                    )
+
+                    new_desc = st.text_area(
+                        "Description",
+                        e["description"],
+                        key=f"edit_desc_{e['id']}"
+                    )
+
+                    new_start = st.date_input(
+                        "Start date",
+                        datetime.fromisoformat(e["start"]).date(),
+                        key=f"edit_start_{e['id']}"
+                    )
+
+                    new_end = st.date_input(
+                        "End date",
+                        datetime.fromisoformat(e["end"]).date(),
+                        key=f"edit_end_{e['id']}"
+                    )
+
+                    if st.button("💾 Save changes", key=f"edit_save_{e['id']}"):
+                        from functions.events import update_event_details
+
+                        update_event_details(
+                            e["id"],
+                            new_title,
+                            new_desc,
+                            new_start,
+                            new_end,
+                            user["username"],
+                            is_admin
+                        )
+                        st.rerun()
+
+                    if st.button("🗑 Delete", key=f"del_{e['id']}"):
                         delete_event(e["id"], user["username"], is_admin)
                         st.rerun()
 
-                if is_admin:
-                    st.divider()
-                    st.markdown("### 🛡 Admin Controls")
-                    st.caption("Admin can moderate all events")
+
+
+    if is_admin:
+        st.divider()
+        st.markdown("### 🛡 Admin Controls")
+        st.caption("Admin can moderate all events")

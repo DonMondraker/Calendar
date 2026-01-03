@@ -2,3 +2,5 @@ streamlit
 pytz
 bcrypt
 streamlit_calendar
+icalendar
+

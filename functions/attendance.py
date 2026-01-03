@@ -1,19 +1,18 @@
-from functions.database import get_conn
+from functions.database import get_connection
 
 def set_attendance(event_id, username, status):
-    conn = get_conn()
+    conn = get_connection()
     c = conn.cursor()
     c.execute("""
-        INSERT INTO attendance (event_id, username, status)
+        INSERT OR REPLACE INTO attendance
+        (event_id, username, status)
         VALUES (?, ?, ?)
-        ON CONFLICT(event_id, username)
-        DO UPDATE SET status=excluded.status
     """, (event_id, username, status))
     conn.commit()
     conn.close()
 
 def get_attendance(event_id):
-    conn = get_conn()
+    conn = get_connection()
     c = conn.cursor()
     c.execute(
         "SELECT username, status FROM attendance WHERE event_id=?",
